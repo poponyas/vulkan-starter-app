@@ -92,9 +92,10 @@ if(GLSLC_FOUND)
 
 		add_custom_command(
 			OUTPUT ${SHADER_BINARY_PATH}
-			COMMAND glslc ${SHADER_SOURCE} -o ${SHADER_BINARY_PATH}
+			COMMAND "${GLSLC_FOUND}" "${SHADER_SOURCE}" -o "${SHADER_BINARY_PATH}"
 			DEPENDS ${SHADER_SOURCE}
 			COMMENT "Compiling ${SHADER_FILE} shader"
+			VERBATIM
 		)
 
 		list(APPEND _SHADER_BINARIES ${SHADER_BINARY_PATH})
@@ -103,9 +104,11 @@ if(GLSLC_FOUND)
 	# To compile shader file, use compile_shader function with a file name
 	# of a shader inside shaders directory. See example below:
 
-	# compile_shader(example.vert)
-	# compile_shader(example.frag)
+	compile_shader(cube.vert)
+	compile_shader(cube.frag)
 
 	add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
 	add_dependencies(${PROJECT_NAME} shaders)
+else()
+	message(FATAL_ERROR "glslc is required to compile the lab shaders. Install it from the Vulkan SDK or your package manager.")
 endif()

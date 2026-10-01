@@ -49,6 +49,15 @@ cmake --build build-release --parallel # for release
 
 ### Running
 
+On Linux, run `./run.sh` from the project folder. It configures the debug build
+if needed, rebuilds the app, and launches it with the correct working directory.
+
+Lab 1, variant 12 renders a regular hexahedron (cube) with a depth test.
+The ImGui panel controls projection, camera distance and object transformations.
+See [LAB1_EXPLAINED.md](LAB1_EXPLAINED.md) for a Russian walkthrough of every code block
+and the corresponding lecture slides.
+
+
 `build-*` directory will contain the executable in one of the subdirectories after successful build.
 
 For `msvc-{debug|release}` builds output subdirectory is set to `Debug` or `Release` respectively.

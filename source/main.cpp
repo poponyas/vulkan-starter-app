@@ -2,12 +2,14 @@
 #include <climits>
 
 #include <iostream>
+#include <exception>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
 
 #include "graphics_internal.hpp"
 #include "application.hpp"
@@ -26,6 +28,9 @@ GLFWwindow* glfw_window;
 int main() {
 	int status = EXIT_SUCCESS;
 
+	glfwSetErrorCallback([](int code, const char* message) {
+		std::cerr << "GLFW error " << code << ": " << message << '\n';
+	});
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return EXIT_FAILURE;
@@ -62,6 +67,7 @@ int main() {
 
 	if (!graphics::internal::initialize(glfw_window)) {
 		std::cerr << "Failed to initialize graphics\n";
+		graphics::internal::shutdown();
 		status = EXIT_FAILURE;
 		goto err_graphics_init;
 	}
@@ -72,19 +78,33 @@ int main() {
 		goto err_application_init;
 	}
 
-	while (!glfwWindowShouldClose(glfw_window)) {
-		const double time = glfwGetTime();
+	try {
+		while (!glfwWindowShouldClose(glfw_window)) {
+			glfwPollEvents();
+			if (glfwWindowShouldClose(glfw_window)) break;
+			int width, height;
+			glfwGetFramebufferSize(glfw_window, &width, &height);
+			if (width == 0 || height == 0) {
+				glfwWaitEvents();
+				continue;
+			}
 
-		glfwPollEvents();
-		ImGui_ImplGlfw_NewFrame();
-
-		ImGui::NewFrame();
-		application::update(time);
-		ImGui::Render();
-
-		graphics::internal::FrameData fd = graphics::internal::prepare();
-		application::render(fd);
-		graphics::internal::submitAndPresent();
+			graphics::internal::FrameData fd = graphics::internal::prepare();
+			if (fd.command_buffer == VK_NULL_HANDLE) {
+				status = EXIT_FAILURE;
+				break;
+			}
+			ImGui_ImplVulkan_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
+			application::update(glfwGetTime());
+			ImGui::Render();
+			application::render(fd);
+			graphics::internal::submitAndPresent();
+		}
+	} catch (const std::exception& error) {
+		std::cerr << error.what() << '\n';
+		status = EXIT_FAILURE;
 	}
 
 	application::shutdown();
@@ -99,5 +119,5 @@ err_imgui_init:
 err_null_window:
 	glfwTerminate();
 
-	return 0;
+	return status;
 }
