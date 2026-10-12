@@ -3,7 +3,6 @@
 layout(location = 0) in vec3 in_position;
 layout(location = 0) out vec3 local_position;
 
-// Lecture 3, slide 21: data shared by every vertex in this draw.
 layout(set = 0, binding = 0, std140) uniform GlobalUniforms {
     mat4 mvp;
 } globals;

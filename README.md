@@ -52,10 +52,23 @@ cmake --build build-release --parallel # for release
 On Linux, run `./run.sh` from the project folder. It configures the debug build
 if needed, rebuilds the app, and launches it with the correct working directory.
 
+You can also build and launch directly from the project root:
+
+```bash
+cmake --build build-debug --parallel
+./build-debug/vulkan-starter-app
+```
+
+On Wayland, the app disables libdecor to avoid GTK decoration-plugin crashes
+caused by incompatible desktop settings schemas. GLFW supplies basic window
+decorations when needed.
+
 Lab 1, variant 12 renders a regular hexahedron (cube) with a depth test.
 The ImGui panel controls projection, camera distance and object transformations.
-See [LAB1_EXPLAINED.md](LAB1_EXPLAINED.md) for a Russian walkthrough of every code block
-and the corresponding lecture slides.
+Matrix transformations use GLM, fetched automatically by CMake. Reusable buffer
+and shader helpers are in `source/graphics.hpp` and `source/graphics.cpp`.
+See [LAB1_EXPLAINED.md](LAB1_EXPLAINED.md) for a Russian defense guide, lecture
+references, and Git publishing instructions.
 
 
 `build-*` directory will contain the executable in one of the subdirectories after successful build.
@@ -71,5 +84,5 @@ because relative paths are used.
 ### Compiling shaders
 
 `CMakeLists.txt` has a build recipe for compiling shader files
-along with an application. Look for a comment in this file to see
-how to compile your shaders.
+along with an application. The calls to `compile_shader(cube.vert)` and
+`compile_shader(cube.frag)` register the lab shaders.

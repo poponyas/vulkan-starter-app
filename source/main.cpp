@@ -31,6 +31,7 @@ int main() {
 	glfwSetErrorCallback([](int code, const char* message) {
 		std::cerr << "GLFW error " << code << ": " << message << '\n';
 	});
+	glfwInitHint(GLFW_WAYLAND_LIBDECOR, GLFW_WAYLAND_DISABLE_LIBDECOR);
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return EXIT_FAILURE;

@@ -1,15 +1,15 @@
 #include "application.hpp"
+#include "graphics.hpp"
 
 #include <imgui.h>
-#include <cmath>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <exception>
 #include <cstddef>
-#include <cstring>
-#include <fstream>
 #include <iostream>
 #include <iterator>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 namespace application {
 namespace {
@@ -18,21 +18,15 @@ struct Vertex {
     float position[3];
 };
 
-struct alignas(16) Mat4 {
-    float data[16] = {};
-};
 struct alignas(16) GlobalUniforms {
-    Mat4 mvp;
+    glm::mat4 mvp;
 };
 static_assert(sizeof(Vertex) == 3 * sizeof(float));
 static_assert(sizeof(GlobalUniforms) == 64);
 
-VkBuffer vertex_buffer = VK_NULL_HANDLE;
-VmaAllocation vertex_buffer_allocation = VK_NULL_HANDLE;
-VkBuffer index_buffer = VK_NULL_HANDLE;
-VmaAllocation index_buffer_allocation = VK_NULL_HANDLE;
-VkBuffer uniform_buffer = VK_NULL_HANDLE;
-VmaAllocation uniform_buffer_allocation = VK_NULL_HANDLE;
+graphics::Buffer vertex_buffer;
+graphics::Buffer index_buffer;
+graphics::Buffer uniform_buffer;
 VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
 VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
 VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
@@ -51,71 +45,6 @@ struct Controls {
     bool perspective = true;
 };
 Controls controls;
-
-constexpr float pi = 3.14159265358979323846f;
-float radians(float degrees) { return degrees * pi / 180.0f; }
-
-Mat4 identity() {
-    Mat4 m;
-    m.data[0] = m.data[5] = m.data[10] = m.data[15] = 1.0f;
-    return m;
-}
-Mat4 multiply(const Mat4& a, const Mat4& b) {
-    Mat4 result;
-    for (int column = 0; column < 4; ++column)
-        for (int row = 0; row < 4; ++row)
-            for (int k = 0; k < 4; ++k)
-                result.data[column * 4 + row] +=
-                    a.data[k * 4 + row] * b.data[column * 4 + k];
-    return result;
-}
-Mat4 translation(float x, float y, float z) {
-    Mat4 m = identity();
-    m.data[12] = x; m.data[13] = y; m.data[14] = z;
-    return m;
-}
-Mat4 scaling(float x, float y, float z) {
-    Mat4 m = identity();
-    m.data[0] = x; m.data[5] = y; m.data[10] = z;
-    return m;
-}
-Mat4 rotationX(float angle) {
-    Mat4 m = identity();
-    const float c = std::cos(angle), s = std::sin(angle);
-    m.data[5] = c; m.data[6] = s; m.data[9] = -s; m.data[10] = c;
-    return m;
-}
-Mat4 rotationY(float angle) {
-    Mat4 m = identity();
-    const float c = std::cos(angle), s = std::sin(angle);
-    m.data[0] = c; m.data[2] = -s; m.data[8] = s; m.data[10] = c;
-    return m;
-}
-Mat4 rotationZ(float angle) {
-    Mat4 m = identity();
-    const float c = std::cos(angle), s = std::sin(angle);
-    m.data[0] = c; m.data[1] = s; m.data[4] = -s; m.data[5] = c;
-    return m;
-}
-Mat4 perspective(float fov, float aspect, float near_plane, float far_plane) {
-    Mat4 m;
-    const float cotangent = 1.0f / std::tan(fov / 2.0f);
-    m.data[0] = cotangent / aspect;
-    m.data[5] = -cotangent; 
-    m.data[10] = far_plane / (near_plane - far_plane);
-    m.data[11] = -1.0f;    
-    m.data[14] = near_plane * far_plane / (near_plane - far_plane);
-    return m;
-}
-Mat4 orthographic(float half_height, float aspect, float near_plane, float far_plane) {
-    Mat4 m = identity();
-    m.data[0] = 1.0f / (half_height * aspect);
-    m.data[5] = -1.0f / half_height;
-    m.data[10] = 1.0f / (near_plane - far_plane);
-    m.data[14] = near_plane / (near_plane - far_plane);
-    return m;
-}
-
 
 const Vertex vertices[] = {
     { {-0.5f, -0.5f, -0.5f} },
@@ -149,60 +78,6 @@ const uint16_t indices[] = {
     3, 6, 2,
 };
 
-
-void check(VkResult result, const char* operation) {
-    if (result != VK_SUCCESS)
-        throw std::runtime_error(std::string(operation) + " (VkResult " +
-                                 std::to_string(result) + ")");
-}
-void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
-                  VkBuffer& buffer, VmaAllocation& allocation) {
-    const VkBufferCreateInfo info = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = size,
-        .usage = usage,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-    };
-    const VmaAllocationCreateInfo memory = {
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO,
-    };
-    check(vmaCreateBuffer(graphics::internal::context.allocator, &info, &memory,
-                          &buffer, &allocation, nullptr), "Create application buffer");
-}
-void uploadBuffer(VmaAllocation allocation, const void* data, VkDeviceSize size) {
-    auto allocator = graphics::internal::context.allocator;
-    void* mapped = nullptr;
-    check(vmaMapMemory(allocator, allocation, &mapped), "Map application buffer");
-    std::memcpy(mapped, data, static_cast<size_t>(size));
-    const VkResult result = vmaFlushAllocation(allocator, allocation, 0, size);
-    vmaUnmapMemory(allocator, allocation);
-    check(result, "Flush application buffer");
-}
-
-
-void loadShader(const char* path, VkShaderModule& shader) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file)
-        throw std::runtime_error(std::string("Cannot open shader: ") + path +
-                                 "; launch from the project directory using ./run.sh");
-    const auto size = file.tellg();
-    if (size < 20 || size % 4 != 0)
-        throw std::runtime_error(std::string("Invalid SPIR-V size: ") + path);
-    std::vector<uint32_t> code(static_cast<size_t>(size) / sizeof(uint32_t));
-    file.seekg(0);
-    if (!file.read(reinterpret_cast<char*>(code.data()), size) || code[0] != 0x07230203)
-        throw std::runtime_error(std::string("Invalid SPIR-V file: ") + path);
-    const VkShaderModuleCreateInfo info = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = static_cast<size_t>(size),
-        .pCode = code.data(),
-    };
-    check(vkCreateShaderModule(graphics::internal::context.device, &info, nullptr, &shader),
-          "Create shader module");
-}
-
-
 void createDescriptors() {
     const auto device = graphics::internal::context.device;
     const VkDescriptorSetLayoutBinding binding = {
@@ -216,7 +91,7 @@ void createDescriptors() {
         .bindingCount = 1,
         .pBindings = &binding,
     };
-    check(vkCreateDescriptorSetLayout(device, &layout, nullptr, &descriptor_set_layout),
+    graphics::check(vkCreateDescriptorSetLayout(device, &layout, nullptr, &descriptor_set_layout),
           "Create descriptor set layout");
     const VkDescriptorPoolSize pool_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
     const VkDescriptorPoolCreateInfo pool = {
@@ -225,7 +100,7 @@ void createDescriptors() {
         .poolSizeCount = 1,
         .pPoolSizes = &pool_size,
     };
-    check(vkCreateDescriptorPool(device, &pool, nullptr, &descriptor_pool),
+    graphics::check(vkCreateDescriptorPool(device, &pool, nullptr, &descriptor_pool),
           "Create descriptor pool");
     const VkDescriptorSetAllocateInfo allocation = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -233,10 +108,10 @@ void createDescriptors() {
         .descriptorSetCount = 1,
         .pSetLayouts = &descriptor_set_layout,
     };
-    check(vkAllocateDescriptorSets(device, &allocation, &descriptor_set),
+    graphics::check(vkAllocateDescriptorSets(device, &allocation, &descriptor_set),
           "Allocate descriptor set");
     const VkDescriptorBufferInfo buffer = {
-        .buffer = uniform_buffer,
+        .buffer = uniform_buffer.handle,
         .offset = 0,
         .range = sizeof(GlobalUniforms),
     };
@@ -251,7 +126,6 @@ void createDescriptors() {
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 }
 
-
 void createPipeline() {
     auto& context = graphics::internal::context;
     const VkPipelineLayoutCreateInfo layout = {
@@ -259,7 +133,7 @@ void createPipeline() {
         .setLayoutCount = 1,
         .pSetLayouts = &descriptor_set_layout,
     };
-    check(vkCreatePipelineLayout(context.device, &layout, nullptr, &pipeline_layout),
+    graphics::check(vkCreatePipelineLayout(context.device, &layout, nullptr, &pipeline_layout),
           "Create pipeline layout");
     const VkPipelineShaderStageCreateInfo stages[] = {
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -342,26 +216,22 @@ void createPipeline() {
         .renderPass = context.render_pass,
         .subpass = 0,
     };
-    check(vkCreateGraphicsPipelines(context.device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline),
+    graphics::check(vkCreateGraphicsPipelines(context.device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline),
           "Create graphics pipeline");
 }
 
-} // namespace
-
+}
 
 bool initialize() {
     try {
-        createBuffer(sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     vertex_buffer, vertex_buffer_allocation);
-        uploadBuffer(vertex_buffer_allocation, vertices, sizeof(vertices));
-        createBuffer(sizeof(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                     index_buffer, index_buffer_allocation);
-        uploadBuffer(index_buffer_allocation, indices, sizeof(indices));
-        createBuffer(sizeof(GlobalUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                     uniform_buffer, uniform_buffer_allocation);
+        vertex_buffer = graphics::createBuffer(sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        graphics::writeBuffer(vertex_buffer, vertices, sizeof(vertices));
+        index_buffer = graphics::createBuffer(sizeof(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        graphics::writeBuffer(index_buffer, indices, sizeof(indices));
+        uniform_buffer = graphics::createBuffer(sizeof(GlobalUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
         createDescriptors();
-        loadShader("shaders/cube.vert.spv", vertex_shader);
-        loadShader("shaders/cube.frag.spv", fragment_shader);
+        vertex_shader = graphics::loadShader("shaders/cube.vert.spv");
+        fragment_shader = graphics::loadShader("shaders/cube.frag.spv");
         createPipeline();
         return true;
     } catch (const std::exception& error) {
@@ -373,7 +243,7 @@ bool initialize() {
 
 void shutdown() {
     auto& context = graphics::internal::context;
-    
+
     vkQueueWaitIdle(context.graphics_queue);
     vkDestroyPipeline(context.device, pipeline, nullptr);
     vkDestroyPipelineLayout(context.device, pipeline_layout, nullptr);
@@ -387,16 +257,10 @@ void shutdown() {
     descriptor_pool = VK_NULL_HANDLE;
     descriptor_set_layout = VK_NULL_HANDLE;
     descriptor_set = VK_NULL_HANDLE;
-    if (uniform_buffer != VK_NULL_HANDLE)
-        vmaDestroyBuffer(context.allocator, uniform_buffer, uniform_buffer_allocation);
-    if (index_buffer != VK_NULL_HANDLE)
-        vmaDestroyBuffer(context.allocator, index_buffer, index_buffer_allocation);
-    if (vertex_buffer != VK_NULL_HANDLE)
-        vmaDestroyBuffer(context.allocator, vertex_buffer, vertex_buffer_allocation);
-    uniform_buffer = index_buffer = vertex_buffer = VK_NULL_HANDLE;
-    uniform_buffer_allocation = index_buffer_allocation = vertex_buffer_allocation = VK_NULL_HANDLE;
+    graphics::destroyBuffer(uniform_buffer);
+    graphics::destroyBuffer(index_buffer);
+    graphics::destroyBuffer(vertex_buffer);
 }
-
 
 void update([[maybe_unused]] double time) {
     ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
@@ -424,29 +288,30 @@ void update([[maybe_unused]] double time) {
     const auto extent = graphics::internal::context.swapchain_extent;
     if (extent.width == 0 || extent.height == 0) return;
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    const Mat4 scale = scaling(controls.scale[0], controls.scale[1], controls.scale[2]);
-    const Mat4 rotate = multiply(rotationZ(radians(controls.rotation[2])),
-                       multiply(rotationY(radians(controls.rotation[1])),
-                                rotationX(radians(controls.rotation[0]))));
-    const Mat4 model = multiply(translation(controls.position[0], controls.position[1],
-                                           controls.position[2]), multiply(rotate, scale));
-    const Mat4 view = translation(0.0f, 0.0f, -controls.distance);
-    const Mat4 projection = controls.perspective
-        ? perspective(radians(controls.fov), aspect, 0.1f, 100.0f)
-        : orthographic(controls.ortho_size, aspect, 0.1f, 100.0f);
-    const GlobalUniforms uniforms = {multiply(projection, multiply(view, model))};
-    uploadBuffer(uniform_buffer_allocation, &uniforms, sizeof(uniforms));
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::make_vec3(controls.position));
+    model = glm::rotate(model, glm::radians(controls.rotation[2]), glm::vec3(0, 0, 1));
+    model = glm::rotate(model, glm::radians(controls.rotation[1]), glm::vec3(0, 1, 0));
+    model = glm::rotate(model, glm::radians(controls.rotation[0]), glm::vec3(1, 0, 0));
+    model = glm::scale(model, glm::make_vec3(controls.scale));
+    const glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, -controls.distance));
+    const float half_height = controls.ortho_size;
+    glm::mat4 projection = controls.perspective
+        ? glm::perspectiveRH_ZO(glm::radians(controls.fov), aspect, 0.1f, 100.0f)
+        : glm::orthoRH_ZO(-half_height * aspect, half_height * aspect,
+                         -half_height, half_height, 0.1f, 100.0f);
+    projection[1][1] *= -1.0f;
+    const GlobalUniforms uniforms = {projection * view * model};
+    graphics::writeBuffer(uniform_buffer, &uniforms, sizeof(uniforms));
 }
-
 
 void render(const graphics::internal::FrameData& fd) {
     auto& context = graphics::internal::context;
-    check(vkResetCommandBuffer(fd.command_buffer, 0), "Reset application command buffer");
+    graphics::check(vkResetCommandBuffer(fd.command_buffer, 0), "Reset application command buffer");
     const VkCommandBufferBeginInfo begin = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    check(vkBeginCommandBuffer(fd.command_buffer, &begin), "Begin application command buffer");
+    graphics::check(vkBeginCommandBuffer(fd.command_buffer, &begin), "Begin application command buffer");
     const VkClearValue clear[] = {
         {.color = {{0.08f, 0.08f, 0.10f, 1.0f}}},
         {.depthStencil = {1.0f, 0}},
@@ -471,13 +336,13 @@ void render(const graphics::internal::FrameData& fd) {
     vkCmdSetScissor(fd.command_buffer, 0, 1, &scissor);
     vkCmdBindPipeline(fd.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     const VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(fd.command_buffer, 0, 1, &vertex_buffer, &offset);
-    vkCmdBindIndexBuffer(fd.command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindVertexBuffers(fd.command_buffer, 0, 1, &vertex_buffer.handle, &offset);
+    vkCmdBindIndexBuffer(fd.command_buffer, index_buffer.handle, 0, VK_INDEX_TYPE_UINT16);
     vkCmdBindDescriptorSets(fd.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
     vkCmdDrawIndexed(fd.command_buffer, static_cast<uint32_t>(std::size(indices)), 1, 0, 0, 0);
     vkCmdEndRenderPass(fd.command_buffer);
-    check(vkEndCommandBuffer(fd.command_buffer), "End application command buffer");
+    graphics::check(vkEndCommandBuffer(fd.command_buffer), "End application command buffer");
 }
 
-} // namespace application
+}
