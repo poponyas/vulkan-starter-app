@@ -63,14 +63,6 @@ On Wayland, the app disables libdecor to avoid GTK decoration-plugin crashes
 caused by incompatible desktop settings schemas. GLFW supplies basic window
 decorations when needed.
 
-Lab 1, variant 12 renders a regular hexahedron (cube) with a depth test.
-The ImGui panel controls projection, camera distance and object transformations.
-Matrix transformations use GLM, fetched automatically by CMake. Reusable buffer
-and shader helpers are in `source/graphics.hpp` and `source/graphics.cpp`.
-See [LAB1_EXPLAINED.md](LAB1_EXPLAINED.md) for a Russian defense guide, lecture
-references, and Git publishing instructions.
-
-
 `build-*` directory will contain the executable in one of the subdirectories after successful build.
 
 For `msvc-{debug|release}` builds output subdirectory is set to `Debug` or `Release` respectively.
